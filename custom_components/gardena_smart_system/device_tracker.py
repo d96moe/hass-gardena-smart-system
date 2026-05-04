@@ -29,7 +29,7 @@ _MOWING_ACTIVITIES = frozenset(
 )
 
 # How often (in seconds) to poll for a fresh GPS position while mowing.
-_POLL_INTERVAL = 15
+_POLL_INTERVAL = 30
 
 # How often (in seconds) to refresh the last-known position while docked/idle.
 # A less-frequent poll keeps coordinates up-to-date so the entity always has
@@ -159,7 +159,7 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
         """Return True when the mower is actively out or moving."""
         current_service = self._get_current_mower_service()
         if current_service and current_service.activity:
-            return (
+            result = (
                 current_service.activity in _MOWING_ACTIVITIES or
                 current_service.activity in [
                     "OK_CUTTING_TIMER_OVERRIDDEN",
@@ -170,6 +170,13 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
                     "STARTING",
                 ]
             )
+            _LOGGER.debug(
+                "is_mowing: activity=%r state=%r in_mowing_activities=%r -> %r",
+                current_service.activity, current_service.state,
+                current_service.activity in _MOWING_ACTIVITIES,
+                result,
+            )
+            return result
         return False
 
     def _update_position_from_data(self, device_data: dict) -> bool:
