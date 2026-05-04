@@ -159,30 +159,15 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
         """Return True when the mower is actively out or moving."""
         current_service = self._get_current_mower_service()
         if current_service and current_service.activity:
-            result = (current_service.activity in _MOWING_ACTIVITIES or
-                current_service.activity in [
-                    "OK_CUTTING_TIMER_OVERRIDDEN", "MOWING", "GOING_HOME",
-                    "FOLLOW_GUIDE", "LEAVING", "STARTING"
-                ])
-            _LOGGER.debug(
-                "Tingeling status check: activity=%r state=%r in_mowing_activities=%r hardcoded_match=%r -> result=%r",
-                current_service.activity,
-                current_service.state,
-                current_service.activity in _MOWING_ACTIVITIES,
-                current_service.activity in ["OK_CUTTING_TIMER_OVERRIDDEN", "MOWING", "GOING_HOME", "FOLLOW_GUIDE", "LEAVING", "STARTING"],
-                result,
-            )
             return (
-                # Check against the default activity list from the integration
-                current_service.activity in _MOWING_ACTIVITIES or 
-                # Check for manual overrides and specific movement states
+                current_service.activity in _MOWING_ACTIVITIES or
                 current_service.activity in [
-                    "OK_CUTTING_TIMER_OVERRIDDEN", 
-                    "MOWING", 
-                    "GOING_HOME", 
+                    "OK_CUTTING_TIMER_OVERRIDDEN",
+                    "MOWING",
+                    "GOING_HOME",
                     "FOLLOW_GUIDE",
-                    "LEAVING",      # Moving out from the dock
-                    "STARTING"      # Initializing the cutting session
+                    "LEAVING",
+                    "STARTING",
                 ]
             )
         return False
@@ -290,6 +275,7 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
 
         seconds_since_keepalive = 0
         seconds_since_idle_poll = 0
+        was_mowing = False
 
         try:
             while True:
@@ -297,7 +283,18 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
                 seconds_since_keepalive += _POLL_INTERVAL
                 seconds_since_idle_poll += _POLL_INTERVAL
 
-                if self._is_mowing():
+                is_mowing = self._is_mowing()
+                if is_mowing != was_mowing:
+                    current_service = self._get_current_mower_service()
+                    _LOGGER.debug(
+                        "Mower %s mowing state changed: %s -> %s (activity=%r state=%r)",
+                        self._device_id, was_mowing, is_mowing,
+                        current_service.activity if current_service else None,
+                        current_service.state if current_service else None,
+                    )
+                    was_mowing = is_mowing
+
+                if is_mowing:
                     await self._fetch_and_update_position()
                     seconds_since_idle_poll = 0
                     _LOGGER.debug("Position updated for mower %s", self._device_id)
@@ -308,12 +305,6 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
                     await self._fetch_and_update_position()
                     _LOGGER.debug(
                         "Idle position refresh for mower %s", self._device_id
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Mower %s is not mowing; next idle refresh in %ds",
-                        self._device_id,
-                        _IDLE_POLL_INTERVAL - seconds_since_idle_poll,
                     )
 
                 # Keepalive: re-activate the stream every 8 minutes regardless
