@@ -257,7 +257,7 @@ class GardenaSmartSystemClient:
                 "name": "position_timer",
                 "timestamp": timeout_ts,
                 "unit": "seconds",
-                "value": 0,
+                "value": 600,
             }
         }
 
@@ -271,9 +271,15 @@ class GardenaSmartSystemClient:
         try:
             async with session.put(url, data=json.dumps(body, ensure_ascii=False), headers=headers) as response:
                 if response.status not in (200, 204):
+                    body_text = await response.text()
                     _LOGGER.debug(
-                        "activate_mower_position returned %s for device %s",
-                        response.status, device_id,
+                        "activate_mower_position returned %s for device %s (lona_id=%s): %s",
+                        response.status, device_id, lona_ability_id, body_text,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "activate_mower_position returned %s for device %s (lona_id=%s)",
+                        response.status, device_id, lona_ability_id,
                     )
         except aiohttp.ClientError as e:
             _LOGGER.debug("Network error activating mower position stream for %s: %s", device_id, e) 

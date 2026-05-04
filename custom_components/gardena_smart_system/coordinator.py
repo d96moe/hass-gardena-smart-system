@@ -173,7 +173,13 @@ class GardenaSmartSystemCoordinator(DataUpdateCoordinator[Dict[str, GardenaLocat
                 service.state = extract_value(event_data, 'state')
             
             if hasattr(service, 'activity') and 'activity' in event_data:
+                old_activity = service.activity
                 service.activity = extract_value(event_data, 'activity')
+                if old_activity != service.activity:
+                    _LOGGER.debug(
+                        "Service %s activity changed: %r -> %r (raw event value: %r)",
+                        service.id, old_activity, service.activity, event_data['activity'],
+                    )
             
             # Update service-specific attributes
             if hasattr(service, 'battery_level') and 'batteryLevel' in event_data:

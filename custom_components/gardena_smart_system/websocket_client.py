@@ -111,9 +111,17 @@ class GardenaWebSocketClient:
             ssl_context = None
             if self.auth_manager._dev_mode:
                 import ssl
-                ssl_context = ssl.create_default_context()
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+
+                def _make_insecure_ssl_context():
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    return ctx
+
+                if self.hass:
+                    ssl_context = await self.hass.async_add_executor_job(_make_insecure_ssl_context)
+                else:
+                    ssl_context = await asyncio.get_event_loop().run_in_executor(None, _make_insecure_ssl_context)
             
             self.websocket = await websockets.connect(
                 self.websocket_url,
@@ -252,7 +260,12 @@ class GardenaWebSocketClient:
             
             # Extract device_id from service_id (remove suffixes like :1, :2, etc.)
             device_id = service_id.split(":")[0]
-            
+
+            if service_type == "MOWER":
+                _LOGGER.debug(
+                    "WS MOWER raw message: id=%s attributes=%s",
+                    service_id, attributes,
+                )
             _LOGGER.debug(f"Processing service update: service_id={service_id}, device_id={device_id}, type={service_type}")
             
             # Create event for callback

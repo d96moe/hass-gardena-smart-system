@@ -29,7 +29,7 @@ _MOWING_ACTIVITIES = frozenset(
 )
 
 # How often (in seconds) to poll for a fresh GPS position while mowing.
-_POLL_INTERVAL = 30
+_POLL_INTERVAL = 15
 
 # How often (in seconds) to refresh the last-known position while docked/idle.
 # A less-frequent poll keeps coordinates up-to-date so the entity always has
@@ -100,6 +100,11 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
     def longitude(self) -> Optional[float]:
         """Return the current longitude of the mower."""
         return self._longitude
+    
+    @property
+    def gps_accuracy(self) -> int:
+        """Force HA to accept the position by responding with 1 meter."""
+        return 1
 
     # ------------------------------------------------------------------
     # Extra attributes
@@ -122,7 +127,7 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
     async def async_added_to_hass(self) -> None:
         """Start the position-tracking loop when the entity is added to HA."""
         await super().async_added_to_hass()
-        self._tracking_task = self.hass.async_create_task(
+        self._tracking_task = self.hass.async_create_background_task(
             self._position_tracking_loop(),
             name=f"gardena_mower_tracker_{self._device_id}",
         )
@@ -151,10 +156,35 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
         return None
 
     def _is_mowing(self) -> bool:
-        """Return True when the mower is actively out on the lawn."""
+        """Return True when the mower is actively out or moving."""
         current_service = self._get_current_mower_service()
         if current_service and current_service.activity:
-            return current_service.activity in _MOWING_ACTIVITIES
+            result = (current_service.activity in _MOWING_ACTIVITIES or
+                current_service.activity in [
+                    "OK_CUTTING_TIMER_OVERRIDDEN", "MOWING", "GOING_HOME",
+                    "FOLLOW_GUIDE", "LEAVING", "STARTING"
+                ])
+            _LOGGER.debug(
+                "Tingeling status check: activity=%r state=%r in_mowing_activities=%r hardcoded_match=%r -> result=%r",
+                current_service.activity,
+                current_service.state,
+                current_service.activity in _MOWING_ACTIVITIES,
+                current_service.activity in ["OK_CUTTING_TIMER_OVERRIDDEN", "MOWING", "GOING_HOME", "FOLLOW_GUIDE", "LEAVING", "STARTING"],
+                result,
+            )
+            return (
+                # Check against the default activity list from the integration
+                current_service.activity in _MOWING_ACTIVITIES or 
+                # Check for manual overrides and specific movement states
+                current_service.activity in [
+                    "OK_CUTTING_TIMER_OVERRIDDEN", 
+                    "MOWING", 
+                    "GOING_HOME", 
+                    "FOLLOW_GUIDE",
+                    "LEAVING",      # Moving out from the dock
+                    "STARTING"      # Initializing the cutting session
+                ]
+            )
         return False
 
     def _update_position_from_data(self, device_data: dict) -> bool:
@@ -169,6 +199,8 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
                 for prop in ability.get("properties", []):
                     if prop.get("name") == "position":
                         value = prop.get("value", {})
+                        # LÄGG TILL DENNA RAD HÄR:
+                        _LOGGER.debug("Gardena LONA debug: %s", value)
                         lat = value.get("gnssLatitude")
                         lon = value.get("gnssLongitude")
                         # Prefer real-time coordinates when available.
@@ -194,11 +226,24 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
             return
 
         try:
+            had_lona_id = self._lona_ability_id
             device_data = await self.coordinator.client.fetch_mower_position(
                 self._device_id, device.location_id
             )
-            if device_data is not None and self._update_position_from_data(device_data):
+            if device_data is not None:
+                self._update_position_from_data(device_data)
                 self.async_write_ha_state()
+                # Activate the position stream the first time we discover the
+                # lona ability ID — this starts real-time position updates on
+                # Gardena's servers regardless of when in the loop it happens.
+                if had_lona_id is None and self._lona_ability_id is not None:
+                    _LOGGER.debug(
+                        "lona ability ID discovered for mower %s: %s — activating position stream",
+                        self._device_id, self._lona_ability_id,
+                    )
+                    await self._activate_position_stream()
+            else:
+                _LOGGER.debug("fetch_mower_position returned no data for mower %s (lona_id=%r)", self._device_id, self._lona_ability_id)
         except aiohttp.ClientError as exc:
             _LOGGER.debug("Network error fetching position for mower %s: %s", self._device_id, exc)
         except Exception:
@@ -232,7 +277,14 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
 
         # Fetch an initial position to discover the lona_ability_id and provide
         # a baseline coordinate before the first timed poll fires.
+        # _fetch_and_update_position will call _activate_position_stream
+        # automatically the first time lona_ability_id is discovered.
         await self._fetch_and_update_position()
+        _LOGGER.debug(
+            "Initial fetch done for mower %s: lona_id=%r lat=%r lon=%r",
+            self._device_id, self._lona_ability_id, self._latitude, self._longitude,
+        )
+        # Belt-and-suspenders: if lona_id was already known, activate now.
         if self._lona_ability_id is not None:
             await self._activate_position_stream()
 
