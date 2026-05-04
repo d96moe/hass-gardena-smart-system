@@ -297,7 +297,12 @@ class GardenaMowerTracker(GardenaEntity, TrackerEntity):
                 if is_mowing:
                     await self._fetch_and_update_position()
                     seconds_since_idle_poll = 0
-                    _LOGGER.debug("Position updated for mower %s", self._device_id)
+                    current_service = self._get_current_mower_service()
+                    _LOGGER.debug(
+                        "Position updated for mower %s (activity=%r)",
+                        self._device_id,
+                        current_service.activity if current_service else None,
+                    )
                 elif seconds_since_idle_poll >= _IDLE_POLL_INTERVAL:
                     # Refresh last-known position while docked/idle so the
                     # entity always has valid coordinates for the map card.
